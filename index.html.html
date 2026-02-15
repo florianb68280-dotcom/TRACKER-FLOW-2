@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TRACKER FLOW 🔋</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; background:#000; color:#e5e7eb; }
+    header { padding: 18px; font-size: 22px; font-weight: 800; text-align:center; background:#000; border-bottom:1px solid #111; position:sticky; top:0; letter-spacing:1px; }
+    .container { padding: 16px; max-width: 900px; margin:auto; }
+    .day { margin-bottom: 28px; }
+    .day-header { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .day h2 { margin: 12px 0; font-size: 20px; }
+    .session-input { padding:8px 10px; border:1px solid #222; background:#050505; color:#e5e7eb; width: 55%; }
+    table { width:100%; border-collapse: collapse; background:#050505; }
+    th, td { padding:12px; text-align:left; }
+    th { background:#0a0a0a; font-size:14px; text-transform:uppercase; letter-spacing:.5px; color:#9ca3af; }
+    tr { border-bottom:1px solid #111; }
+    tr:last-child { border-bottom:none; }
+    input, select { width:100%; padding:8px; border-radius:0; border:1px solid #111; background:#000; color:white; }
+    button { margin-top:8px; padding:10px 14px; border:none; border-radius:0; background:#22c55e; color:#022c22; font-weight:700; }
+    .add { background:#111; color:#e5e7eb; border:1px solid #222; }
+    .delete { background:#3a0d0d; color:#fecaca; border:1px solid #7f1d1d; margin-left:8px; }
+    .row-actions { white-space:nowrap; }
+    .section-title { margin-top:40px; margin-bottom:8px; font-size:18px; letter-spacing:1px; color:#9ca3af; }
+    .chart-box { background:#050505; border:1px solid #111; padding:16px; margin-top:16px; }
+  </style>
+</head>
+<body>
+<header>TRACKER FLOW 🔋</header>
+<div class="container" id="app"></div>
+
+<script>
+const days = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+let data = JSON.parse(localStorage.getItem('muscuPro')||'{}');
+
+function save(){ localStorage.setItem('muscuPro', JSON.stringify(data)); }
+
+function ensureDay(day){
+  if(!data[day]) data[day]={ session:"", exercises:[] };
+  if(!data[day].exercises) data[day].exercises=[];
+}
+
+function addExercise(day){
+  ensureDay(day);
+  data[day].exercises.push({name:"", weight:"", reps:""});
+  save(); render();
+}
+
+function deleteExercise(day,i){
+  ensureDay(day);
+  data[day].exercises.splice(i,1);
+  save(); render();
+}
+
+function update(day,i,field,value){ ensureDay(day); data[day].exercises[i][field]=value; save(); }
+function updateSession(day,value){ ensureDay(day); data[day].session = value; save(); }
+
+function getAllExercises(){
+  const set = new Set();
+  days.forEach(day=>{
+    (data[day]?.exercises||[]).forEach(ex=>{ if(ex.name) set.add(ex.name); });
+  });
+  return Array.from(set);
+}
+
+function getProgress(exName){
+  const weights = [];
+  const labels = [];
+  let week = 1;
+  days.forEach(day=>{
+    (data[day]?.exercises||[]).forEach(ex=>{
+      if(ex.name === exName && ex.weight){
+        weights.push(Number(ex.weight));
+        labels.push("S"+week);
+        week++;
+      }
+    });
+  });
+  return {labels, weights};
+}
+
+function render(){
+  const app=document.getElementById('app'); app.innerHTML='';
+
+  days.forEach(day=>{
+    const section=document.createElement('div'); section.className='day';
+    const dayData = data[day] || { session:"", exercises:[] };
+
+    let rows='';
+    (dayData.exercises||[]).forEach((ex,i)=>{
+      rows+=`<tr>
+        <td><input placeholder="Exercice" value="${ex.name}" oninput="update('${day}',${i},'name',this.value)"></td>
+        <td><input type="number" placeholder="Poids" value="${ex.weight}" oninput="update('${day}',${i},'weight',this.value)"></td>
+        <td><input type="number" placeholder="Répétitions" value="${ex.reps}" oninput="update('${day}',${i},'reps',this.value)"></td>
+        <td class="row-actions"><button class="delete" onclick="deleteExercise('${day}',${i})">Supprimer</button></td>
+      </tr>`;
+    });
+
+    section.innerHTML=`
+      <div class="day-header">
+        <h2>${day}</h2>
+        <input class="session-input" placeholder="Séance (ex: Pecs, Dos...)" value="${dayData.session || ''}" oninput="updateSession('${day}', this.value)">
+      </div>
+      <table>
+        <thead>
+          <tr><th>Exercice</th><th>Poids (kg)</th><th>Répétitions</th><th></th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div>
+        <button class="add" onclick="addExercise('${day}')">+ Ajouter un exercice</button>
+      </div>
+    `;
+
+    app.appendChild(section);
+  });
+
+  const graphSection=document.createElement('div'); graphSection.className='day';
+  const exercises = getAllExercises();
+
+  graphSection.innerHTML = `
+    <div class="section-title">PROGRESSION PAR EXERCICE</div>
+    <select id="exerciseSelect">
+      <option value="">-- Choisir un exercice --</option>
+      ${exercises.map(e=>`<option value="${e}">${e}</option>`).join('')}
+    </select>
+    <div class="chart-box"><canvas id="chart"></canvas></div>
+  `;
+
+  app.appendChild(graphSection);
+
+  document.getElementById('exerciseSelect').onchange = drawChart;
+}
+
+let chartInstance;
+function drawChart(){
+  const ex = document.getElementById('exerciseSelect').value;
+  if(!ex) return;
+
+  const {labels, weights} = getProgress(ex);
+  const ctx = document.getElementById('chart');
+
+  if(chartInstance) chartInstance.destroy();
+
+  chartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: ex + ' (kg)',
+        data: weights,
+        borderColor: '#22c55e',
+        backgroundColor: 'rgba(34,197,94,0.15)',
+        tension: 0.25,
+        fill: true,
+        pointRadius: 4
+      }]
+    },
+    options: {
+      plugins: { legend: { labels: { color: '#e5e7eb' } } },
+      scales: {
+        x: { ticks: { color: '#9ca3af' }, grid: { color: '#111' } },
+        y: { ticks: { color: '#9ca3af' }, grid: { color: '#111' } }
+      }
+    }
+  });
+}
+
+render();
+</script>
+</body>
+</html>
